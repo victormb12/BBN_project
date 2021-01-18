@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Nov 17 19:02:30 2020
+
+@author: victormaura12
+"""
+
+from scipy.integrate import quad
+import numpy as np
+from operator import itemgetter
+import time
+import matplotlib.pyplot as plt
+from scipy.special import comb
+from scipy.interpolate import interp1d
+import pickle
+from matplotlib import rcParams
+import pandas as pd
+from cycler import cycler
+
+plt.style.use('seaborn-ticks')
+rcParams['axes.grid']=True
+start_time=time.time()
+plt.rc('axes', prop_cycle=(cycler(color=list('grk'))))
+
+def func_from_pkl(filename):
+    with open(filename+'_func.pickle', 'rb') as handle:
+        cases=pickle.load(handle)
+    return cases
+
+def func_to_pkl(dictionary,filename):
+     with open(filename+'_func.pickle', 'wb') as handle:
+        pickle.dump(dictionary, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        
+def func(u,z,alpha=1):
+    return (u**2*np.sqrt(u**2-z))/(np.exp(u)+alpha)
+
+def geff_part(T,m,gi,alpha=1):
+    const=gi*15/np.pi**4
+    z=m/T
+    func=lambda u: (u**2*np.sqrt(u**2-z**2))/(np.exp(u)+alpha)
+    integral=quad(func,z,np.inf)
+    return const*integral[0]
+
+def smoothstep(x, x_min=0, x_max=10, N=3):
+    x = np.clip((x - x_min) / (x_max - x_min), 0, 1)
+
+    result = 0
+    for n in range(0, N + 1):
+         result += comb(N + n, n) * comb(2 * N + 1, N - n) * (-x) ** n
+
+    result *= x ** (N + 1)
+
+    return result
+
+def qgp(T,fermions,bosons):
+    alpha=1
+    fermions['geff']=fermions.apply(lambda row: geff_part(T,row['mass'],row['g_int'],alpha=alpha),axis=1)
+    alpha=-1
+    bosons['geff']=bosons.apply(lambda row: geff_part(T,row['mass'],row['g_int'],alpha=alpha),axis=1)
+    suma=bosons.sum()[2]+fermions.sum()[2]
+    print(suma)
+    return suma
+
+def hadron_gas(T,fermions,bosons):
+    alpha=1
+    fermions['geff']=fermions.apply(lambda row: geff_part(T,row['mass'],row['g_int'],alpha=alpha),axis=1)
+    alpha=-1
+    bosons['geff']=bosons.apply(lambda row: geff_part(T,row['mass'],row['g_int'],alpha=alpha),axis=1)
+    suma=bosons.sum()[2]+fermions.sum()[2]
+    print(suma)
+    return suma
+   
+def N_eff(T):
+    pass
+
+def neutrino(T):
+    g_N=3.031685026309539*N_eff(T)#=7/8*2*11/4**(4/3)
+
+
+def plot_hadron_gas(fermions, bosons, T_range=(-10,10),num=1000,spline=False):
+    T=np.logspace(T_range[0],T_range[1],num)
+    if spline:
+        hg=[hadron_gas(i,fermions,bosons) for i in T]
+        f2 = interp1d(T, hg, kind='cubic')
+        func_to_pkl(f2,'hadron_gas_spline')
+    else:
+        f2=func_from_pkl('hadron_gas_spline')
+    func=f2(T)
+    plt.plot(T,func,'gray',alpha=0.5,label='Hadron Gas',linestyle='--')
+    plt.semilogx()
+    return func
+
+def plot_qgp(fermions,bosons,T_range=(-10,10),num=1000, spline=False):
+    T=np.logspace(T_range[0],T_range[1],num)
+    if spline:    
+        qg=[qgp(i,fermions,bosons) for i in T]
+        f2 = interp1d(T, qg, kind='cubic')
+        func_to_pkl(f2,'qgp_spline')
+    else:
+        f2=func_from_pkl('qgp_spline')
+    func=f2(T)
+    plt.plot(T,func,'gray',alpha=0.5,label='Quark Gluon Plasma',linestyle=':',)
+    plt.semilogx()
+    return func
+
+def new_geff(T,qcd=0.15,neutr=(10e-6,800e-6),mult=2e1,step=False):
+    #df_bose=pd.read_csv('CSV_mesons.txt',delimiter=' ')
+    #df_bose['mass']=df_bose['mass'].div(1000)
+    #df_fermi=pd.read_csv('CSV_baryons.txt', delimiter=' ')
+    #df_fermi['mass']=df_fermi['mass'].div(1000)
+    #before QCD
+    if T>1000:
+        return 106.75
+    elif T>=neutr[1]:
+        #"""
+        fhg=func_from_pkl('hadron_gas_spline')
+        fqgp=func_from_pkl('qgp_spline')
+        geff=fhg(T)+(1+np.tanh(mult*(T-qcd)))/2*(fqgp(T)-fhg(T))
+        return geff
+
+    elif neutr[0]<T<neutr[1]:
+        y = (new_geff(neutr[0]),new_geff(neutr[1]))
+        var=(y[1]-y[0])*smoothstep(T,x_min=neutr[0],x_max=neutr[1])+y[0]
+        #print(var)
+        return var
+    else:
+        return 2+(4/11)**(4/3)*6*7/8
+   
+    
+def plot_geff(x_min=-6,x_max=3,step=100000 ,spline=False,filename='g_eff_spline',qcd=0.15,mult=2e1):
+    T=np.logspace(x_min,x_max,step)
+    if spline:
+        ge=[new_geff(i,qcd=qcd,mult=mult) for i in T]
+        f2 = interp1d(T, ge, kind='cubic')
+        func_to_pkl(f2,filename)
+    
+    f=func_from_pkl(filename)
+    plt.plot(T,f(T),'-',label=r'$T_{qcd}=%g$'%(qcd))# color='g')
+    plt.legend()
+    plt.semilogx()
+    #plt.xlim((10**x_min,10**x_max))
+    plt.ylim((0,120))
+    plt.xlabel('Temperature in GeV')
+    plt.grid(True)# which='minor',axis='both')
+    
+    
+    
+    
+#"""
+bosons=pd.read_csv('CSV_mesons.txt',delimiter=' ')
+bosons['mass']=bosons['mass'].div(1000)
+fermions=pd.read_csv('CSV_baryons.txt', delimiter=' ')
+fermions['mass']=fermions['mass'].div(1000)
+SM_bosons=pd.read_csv('SM_bosons.txt',delimiter=' ')
+#bosons['mass']=bosons['mass'].div(1000)
+SM_fermions=pd.read_csv('SM_fermions.txt', delimiter=' ')
+#fermions['mass']=fermions['mass'].div(1000)
+
+hadron_geff=plot_hadron_gas(fermions,bosons,spline=True)
+qgp_geff=plot_qgp(SM_fermions,SM_bosons,spline=True)
+
+#idx = np.argwhere(np.diff(np.sign(qgp_geff-hadron_geff))).flatten()
+start_time=time.time()
+
+
+
+plot_geff(x_min=-8,x_max=4,spline=True,filename='g_eff_spline_1000')
+print('--------%s---------'%(time.time()-start_time))
+
+#"""
